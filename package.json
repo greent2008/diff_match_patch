@@ -1,0 +1,30 @@
+{
+  "name": "diff_match_patch",
+  "version": "1.0.0",
+  "description": "双机同步",
+  "main": "index.js",
+  "scripts": {
+    "client": "node build\\Client.js",
+    "server": "node build\\Server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "jianengxi",
+  "license": "MIT",
+  "dependencies": {
+    "@types/amqplib": "^0.5.8",
+    "@types/chokidar": "^1.7.5",
+    "@types/diff-match-patch": "^1.0.32",
+    "@types/ssh2-sftp-client": "^2.0.1",
+    "amqplib": "^0.5.2",
+    "chokidar": "^2.0.4",
+    "diff-match-patch": "^1.0.1",
+    "ssh2-sftp-client": "^2.3.1"
+  },
+  "devDependencies": {
+    "node-sshclient": "^0.2.0",
+    "nodemon": "^1.18.3",
+    "tslint": "^5.11.0",
+    "tslint-config-prettier": "^1.14.0",
+    "typescript": "^2.9.2"
+  }
+}

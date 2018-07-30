@@ -57,7 +57,7 @@ export class Client implements Node {
                 console.log(" [x] Child Process Recieved '%s' From Parent Process", msg);
 
                 // 向task_queue发送消息
-                Amqp.connect('amqp://jianengxi:wsxasd123@180.3.12.141//').then(function (conn) {
+                Amqp.connect('amqp:////').then(function (conn) {
                     return conn.createChannel().then(function (ch) {
                         var q = 'task_queue'
                         var ok = ch.assertQueue(q, { durable: true })
@@ -74,7 +74,7 @@ export class Client implements Node {
                 }).catch(console.warn);
 
                 // 从message_queue获取消息
-                Amqp.connect('amqp://jianengxi:wsxasd123@180.3.12.141//').then(function (conn) {
+                Amqp.connect('amqp:////').then(function (conn) {
                     process.once('SIGINT', function () { conn.close(); });
                     return conn.createChannel().then(function (ch) {
                         ch.setMaxListeners(0);

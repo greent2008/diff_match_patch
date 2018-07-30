@@ -37,7 +37,7 @@ export class Server implements Node {
     async monitor() {
         var that = this
 
-        Amqp.connect('amqp://jianengxi:wsxasd123@180.3.12.141//').then(function (conn) {
+        Amqp.connect('amqp:////').then(function (conn) {
             process.once('SIGINT', function () { conn.close(); });
             return conn.createChannel().then(function (ch) {
                 let ok: any = ch.assertQueue('task_queue', { durable: true })

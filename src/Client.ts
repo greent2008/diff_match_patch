@@ -2,12 +2,11 @@ import Node from './Node';
 import { FSWatcher, watch } from 'chokidar';
 import * as Amqp from "amqplib";
 import * as child from 'child_process'
-import { diff_match_patch } from 'diff-match-patch';
-import { resolve } from 'path';
-import * as fs from "fs";
-// import * as net from "net";
+import { resolve, join } from 'path';
+import * as path from "path";
 
 /**
+ * 生产环境
  * Client class
  */
 export class Client implements Node {
@@ -19,8 +18,7 @@ export class Client implements Node {
     watchDir: string
     patchDir: string
     fileWatcher: FSWatcher
-    dmp: diff_match_patch
-    initFile: string
+    initRelativeDir: string
     private constructor(ip: string, port: string, userName: string, watchDir: string, patchDir: string) {
         this.ip = ip
         this.port = port
@@ -29,12 +27,16 @@ export class Client implements Node {
         this.patchDir = patchDir
         this.fileWatcher = watch(this.watchDir, {
             persistent: true,
-            ignored: /(^|[\/\\])\../,
+            ignored: ['**/patch/**', /\.md5$/],
             ignoreInitial: true,
-            cwd: '.'
+            cwd: '.',
+            depth: 2,
+            awaitWriteFinish: {
+                stabilityThreshold: 5000,
+                pollInterval: 200
+            }
         })
-        this.dmp = new diff_match_patch()
-        this.initFile = watchDir + "\\" + "A.txt"
+        this.initRelativeDir = "20180410"
     }
 
     static getInstance(ip: string, port: string, userName: string, watchDir: string, patchDir: string) {
@@ -47,101 +49,96 @@ export class Client implements Node {
     //监听B文件生成 生成A与B的diff
     monitor() {
         if (process.argv[2] === 'child') {
-            // let ipc = new net.Socket({ fd: 0 })
-
-            let initFile = this.initFile
-            let dmp = this.dmp
-            let patchDir = this.patchDir
+            process.setMaxListeners(0);
 
             // 子线程监听父线程传来的消息
             // msg为新增文件的绝对路径
             process.on('message', function (msg) {
-                console.log('in child process recieved ' + msg);
+                console.log(" [x] Child Process Recieved '%s' From Parent Process", msg);
 
-                // create a patch between A and B
-                let initFileContent = fs.readFileSync(initFile, 'utf8') //初始A文件
-                let latestFileContent = fs.readFileSync(msg, 'utf8')    //父线程监听到的新增的B文件
-                let patch = dmp.patch_make(initFileContent, latestFileContent)
-                let patchText = dmp.patch_toText(patch)
-                let A = (initFile.split(/[\\\/]/).slice(-1))[0];
-                A = A.replace(/\.txt/, '')
-                let B = (msg.split(/[\\\/]/).slice(-1))[0];
-                B = B.replace(/\.txt/, '')
-                let patchFile = patchDir + "\\patch_" + A + "_" + B     //patch文件绝对路径
-                fs.open(patchFile, 'w', function(err, fd) {
-                    if (err) {
-                        throw 'error opening file: ' + err;
-                    }
-                
-                    fs.write(fd, patchText, function(err) {
-                        if (err) throw 'error writing file: ' + err;
-                        fs.close(fd, function() {
-                            console.log('patch file written');
-                            initFile = msg  //初始文件更新为新增的B文件
-                        })
-                    });
-                })
-                
-                Amqp.connect('amqp://localhost').then(function (conn) {
+                // 向task_queue发送消息
+                Amqp.connect('amqp://jianengxi:wsxasd123@180.3.12.141//').then(function (conn) {
                     return conn.createChannel().then(function (ch) {
                         var q = 'task_queue'
                         var ok = ch.assertQueue(q, { durable: true })
+                        ch.setMaxListeners(0);
 
                         return ok.then(function () {
+                            let patchFile = msg;
                             ch.sendToQueue(q, Buffer.from(patchFile), { deliveryMode: true })
                             return ch.close();
                         });
                     }).finally(function () {
-                        conn.close()
+                        conn.close();
                     });
                 }).catch(console.warn);
-                
-                (<any>process).send("child process completed");
+
+                // 从message_queue获取消息
+                Amqp.connect('amqp://jianengxi:wsxasd123@180.3.12.141//').then(function (conn) {
+                    process.once('SIGINT', function () { conn.close(); });
+                    return conn.createChannel().then(function (ch) {
+                        ch.setMaxListeners(0);
+                        let ok: any = ch.assertQueue('message_queue', { durable: true })
+                        ok = ok.then(function () { ch.prefetch(1); });
+                        ok = ok.then(function () {
+                            ch.consume('message_queue', doWork, { noAck: false });
+                        })
+                        return ok;
+
+                        async function doWork(msg) {
+                            var body = msg.content.toString();
+                            console.log(" [x] Child Process Recieved '%s' From Message Queue", body);
+                            ch.ack(msg);
+                            (<any>process).send(body);
+                        }
+                    });
+                })
             });
         } else {
-            // let childProcess = child.spawn(process.execPath, [__filename, 'child'], {
-            //     stdio: 'inherit'
-            // });
-
-            // 子线程处理生成patch 并发送patch文件绝对路径到消息队列
+            let initRelativeDir: string = this.initRelativeDir
+            process.setMaxListeners(0);
+            
+            // 子线程监听处理消息队列
             let childProcess = child.fork(__filename, ['child'], {
                 execPath: process.execPath
             })
-            
-            this.fileWatcher.on('add', path => {
-                path = resolve(path)
-                childProcess.send(path) //父线程发送新增文件的绝对路径到子线程
 
-                //父线程监听子线程是否处理完成
-                childProcess.once('message', function(data) {
-                    if (data.toString() === "child process completed") {
-                        console.log(" [x] From child sent '%s' to server", path);
+            var that = this
+            // 文件夹监控函数
+            let listener = function (PATH: string) {
+                that.fileWatcher.close();
+                PATH = resolve(PATH)
+                let dirName = path.dirname(PATH)
+                dirName = (dirName.split(/\//).slice(-1))[0]
+                let patchName = that.initRelativeDir + '_' + dirName + '.patch'
+                try {
+                    child.execSync(`cd ${that.patchDir} && diff -ruN -x ".md5" ../${that.initRelativeDir} ../${dirName} > ${patchName}`)
+                } catch (error) {
+
+                }
+                console.log(` [x] ${that.patchDir}/${patchName} Created`)
+                that.initRelativeDir = dirName
+                that.fileWatcher = watch(that.watchDir, {
+                    persistent: true,
+                    ignored: ['**/patch/**', /\.md5$/],
+                    ignoreInitial: true,
+                    cwd: '.',
+                    depth: 2,
+                    awaitWriteFinish: {
+                        stabilityThreshold: 5000,
+                        pollInterval: 200
                     }
+                })
+                that.fileWatcher.addListener('add', listener);
+                childProcess.send(`${that.patchDir}/${patchName}`);
+                childProcess.once('message', function (data) {
+                    console.log(" [x] Sent %s To Server", data);
+                    console.log("--------------------------------------")
                 });
-            });
+            }
+            this.fileWatcher.addListener('add', listener);
         }
-        // this.fileWatcher.on('add', (event, path) => {
-        //     console.log("add")
-        //     Amqp.connect('amqp://localhost').then(function (conn) {
-        //         return conn.createChannel().then(function (ch) {
-        //             var q = 'task_queue'
-        //             var ok = ch.assertQueue(q, { durable: true })
-
-        //             return ok.then(function () {
-        //                 var msg = "add"
-        //                 ch.sendToQueue(q, Buffer.from(msg), { deliveryMode: true })
-        //                 console.log(" [x] Sent '%s'", msg)
-        //                 return ch.close()
-        //             })
-        //         }).finally(function () {
-        //             conn.close()
-        //         })
-        //     }).catch(console.warn)
-        // })
     }
-
-    // //开启socket通信 通知灾备已经生成A与B的diff
-    // openSocket() {}
 
     //启动程序
     activate() {
@@ -150,5 +147,7 @@ export class Client implements Node {
 
 }
 
-let client = Client.getInstance('127.0.0.1', '22', 'jianengxi', 'E:\\test', 'E:\\patch')
-client.activate()
+let client = Client.getInstance('180.3.12.141', '22', 'jianengxi',
+    '/home/jianengxi/projects/diff_match_patch/test/production/',
+    '/home/jianengxi/projects/diff_match_patch/test/production/patch');
+client.activate();

@@ -1,11 +1,11 @@
-// import * as child from 'child_process';
 import Node from './Node';
 import * as Amqp from "amqplib";
-import * as SftpClient from "ssh2-sftp-client";
 import * as fs from "fs";
-// import { patch_obj } from 'diff-match-patch';
+import * as child from 'child_process'
+import { join } from 'path';
 
-var sftp = new SftpClient();
+let Client = require('ssh2-sftp-client');
+let sftp = new Client();
 
 /**
  * 灾备
@@ -18,27 +18,26 @@ export class Server implements Node {
     port: string
     userName: string
     watchDir: string
-    patchDir: string
-    initFile: string
-    private constructor(ip: string, port: string, userName: string, watchDir: string, patchDir: string) {
+    initRelativeDir: string
+    private constructor(ip: string, port: string, userName: string, watchDir: string) {
         this.ip = ip
         this.port = port
         this.userName = userName
         this.watchDir = watchDir
-        this.patchDir = patchDir
-        this.initFile = watchDir + "\\" + "A_Prime.txt"
+        this.initRelativeDir = "20180410"
     }
-    static getInstance(ip: string, port: string, userName: string, watchDir: string, patchDir: string) {
+    static getInstance(ip: string, port: string, userName: string, watchDir: string) {
         if (!Server.instance) {
-            Server.instance = new Server(ip, port, userName, watchDir, patchDir)
+            Server.instance = new Server(ip, port, userName, watchDir)
         }
         return Server.instance
     }
 
     //监听B文件生成 生成A与B的diff
-    monitor() {
+    async monitor() {
         var that = this
-        Amqp.connect('amqp://localhost').then(function (conn) {
+
+        Amqp.connect('amqp://jianengxi:wsxasd123@180.3.12.141//').then(function (conn) {
             process.once('SIGINT', function () { conn.close(); });
             return conn.createChannel().then(function (ch) {
                 let ok: any = ch.assertQueue('task_queue', { durable: true })
@@ -52,63 +51,44 @@ export class Server implements Node {
                 async function doWork(msg) {
                     var body = msg.content.toString();
                     console.log(" [x] Received '%s'", body);
-                    // let childProcess = child.fork(__filename, ['child', '127.0.0.1', 'jianengxi', 'wsxasd123', body, that.patchDir], {
-                    //     execPath: process.execPath
-                    // })
-                    // childProcess.on('message', function (data) {
-                    //     if (data.toString() === "scp completed") {
-                    //         console.log('scp completed');
-                    //     }
-                    // })
-                    // childProcess.kill();
-                    let fileName = body.split(/[\\\/]/).slice(-1)[0];
-                    await that.pullFile('127.0.0.1', 'jianengxi', 'wsxasd123', body, "E:\\patch_prime\\" + fileName);
-                    var secs = body.split('.').length - 1;
-                    //console.log(" [x] Task takes %d seconds", secs);
-                    setTimeout(function () {
-                        console.log(" [x] Done");
-                        ch.ack(msg);
-                    }, secs * 1000);
+                    let patchFileName = body.split(/[\\\/]/).slice(-1)[0];
+
+                    await that.pullFile('180.3.12.141',
+                        'jianengxi',
+                        body,
+                        join(that.watchDir, patchFileName));
+
+                    console.log(" [x] Server Completely Downloaded Patch File");
+
+                    that.patchDiff(patchFileName);
+                    ch.ack(msg);
+                    ch.sendToQueue('message_queue', Buffer.from(body));
                 }
             });
         })
     }
 
-    //从生产环境scp diff_patch 到本地灾备
-    async pullFile(hostName: string, userName: string, passWord: string, remotePath: string, localPath: string) {
-        await sftp.connect({
+    //从生产环境sftp diff_patch 到本地灾备
+    pullFile(hostName: string, userName: string, remotePath: string, localPath: string): any {
+        return sftp.connect({
             host: hostName,
             port: 22,
             username: userName,
-            privateKey: fs.readFileSync("C:\\Users\\jianengxi\\.ssh\\jinjiaosuo")
-        }).then(() => {
-            sftp.get(remotePath, false, 'utf8').then((stream) => {
-                stream.pipe(fs.createWriteStream(localPath, {
-                    flags: 'w',
-                    mode: 777
-                }))
-                    .on('close', () => console.log('completely passed file'));
-            }).catch((err) => {
-                console.log(err)
-            });
-        })
-        // return new Promise((resolve, reject) => {
-        //     scp2.scp({
-        //         host: hostName,
-        //         username: userName,
-        //         password: passWord,
-        //         path: remotePath,
-        //     }, localPath, function (err) {
-        //         if (err) {
-        //             // throw 'error pullFile: ' + err;
-        //             return;
-        //         }
-        //     });
-        // })
+            privateKey: fs.readFileSync("/home/tra4/.ssh/jianengxi_ubuntu", "utf8")
+        }).then(async () => {
+            await sftp.fastGet(remotePath, localPath)
+                .catch((err) => {
+                    console.log(err);
+                });
+        });
     }
 
     //patch A与B的diff到 A_Prime生成B_Prime
-    patchDiff() { }
+    patchDiff(patchFileName: string) {
+        let newDir = (patchFileName.split(/[\.\_\\\/]/).slice(-2))[0]
+        child.execSync(`cd ${this.watchDir} && patch -p1 < ${patchFileName} && mv ${this.initRelativeDir} ${newDir}`)
+        this.initRelativeDir = newDir
+    }
 
     //启动程序
     activate() {
@@ -117,11 +97,6 @@ export class Server implements Node {
 
 }
 
-let server = Server.getInstance('127.0.0.1', '22', 'jianengxi', "E:\\test_prime", "E:\\patch_prime\\patch_A_B")
-if (process.argv[2] === "child") {
-    console.log("server in child process");
-    server.pullFile(process.argv[3], process.argv[4], process.argv[5], process.argv[6], process.argv[7]);
-    (<any>process).send("scp completed");
-} else {
-    server.activate()
-}
+let server = Server.getInstance('180.2.30.60', '22', 'tra4',
+    "/home/tra4/projects/diff_match_patch/test/disaster_recovery");
+server.activate();

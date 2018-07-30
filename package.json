@@ -4,8 +4,8 @@
   "description": "双机同步",
   "main": "index.js",
   "scripts": {
-    "client": "node build\\Client.js",
-    "server": "node build\\Server.js",
+    "client": "node build/Client.js",
+    "server": "node build/Server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "jianengxi",
@@ -13,11 +13,11 @@
   "dependencies": {
     "@types/amqplib": "^0.5.8",
     "@types/chokidar": "^1.7.5",
-    "@types/diff-match-patch": "^1.0.32",
+    "@types/sleep": "0.0.7",
     "@types/ssh2-sftp-client": "^2.0.1",
     "amqplib": "^0.5.2",
     "chokidar": "^2.0.4",
-    "diff-match-patch": "^1.0.1",
+    "sleep": "^5.1.1",
     "ssh2-sftp-client": "^2.3.1"
   },
   "devDependencies": {

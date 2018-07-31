@@ -5,6 +5,7 @@ import * as child from 'child_process'
 import { resolve, join } from 'path';
 import * as path from "path";
 
+var config = require('../Config')
 /**
  * 生产环境
  * Client class
@@ -19,7 +20,8 @@ export class Client implements Node {
     patchDir: string
     fileWatcher: FSWatcher
     initRelativeDir: string
-    private constructor(ip: string, port: string, userName: string, watchDir: string, patchDir: string) {
+    amqpUri: string
+    private constructor(ip: string, port: string, userName: string, watchDir: string, patchDir: string, amqpUri: string) {
         this.ip = ip
         this.port = port
         this.userName = userName
@@ -36,12 +38,13 @@ export class Client implements Node {
                 pollInterval: 200
             }
         })
-        this.initRelativeDir = "20180410"
+        this.initRelativeDir = config.init_relative_dir
+        this.amqpUri = amqpUri
     }
 
-    static getInstance(ip: string, port: string, userName: string, watchDir: string, patchDir: string) {
+    static getInstance(ip: string, port: string, userName: string, watchDir: string, patchDir: string, amqpUri: string) {
         if (!Client.instance) {
-            Client.instance = new Client(ip, port, userName, watchDir, patchDir)
+            Client.instance = new Client(ip, port, userName, watchDir, patchDir, amqpUri)
         }
         return Client.instance;
     }
@@ -50,14 +53,14 @@ export class Client implements Node {
     monitor() {
         if (process.argv[2] === 'child') {
             process.setMaxListeners(0);
-
+            let that = this
             // 子线程监听父线程传来的消息
             // msg为新增文件的绝对路径
             process.on('message', function (msg) {
                 console.log(" [x] Child Process Recieved '%s' From Parent Process", msg);
 
                 // 向task_queue发送消息
-                Amqp.connect('amqp:////').then(function (conn) {
+                Amqp.connect(that.amqpUri).then(function (conn) {
                     return conn.createChannel().then(function (ch) {
                         var q = 'task_queue'
                         var ok = ch.assertQueue(q, { durable: true })
@@ -74,7 +77,7 @@ export class Client implements Node {
                 }).catch(console.warn);
 
                 // 从message_queue获取消息
-                Amqp.connect('amqp:////').then(function (conn) {
+                Amqp.connect(that.amqpUri).then(function (conn) {
                     process.once('SIGINT', function () { conn.close(); });
                     return conn.createChannel().then(function (ch) {
                         ch.setMaxListeners(0);
@@ -97,7 +100,7 @@ export class Client implements Node {
         } else {
             let initRelativeDir: string = this.initRelativeDir
             process.setMaxListeners(0);
-            
+
             // 子线程监听处理消息队列
             let childProcess = child.fork(__filename, ['child'], {
                 execPath: process.execPath
@@ -147,7 +150,11 @@ export class Client implements Node {
 
 }
 
-let client = Client.getInstance('180.3.12.141', '22', 'jianengxi',
-    '/home/jianengxi/projects/diff_match_patch/test/production/',
-    '/home/jianengxi/projects/diff_match_patch/test/production/patch');
+let client = Client.getInstance(
+    config.client_ip,
+    config.client_port,
+    config.client_username,
+    config.client_watch_dir,
+    config.client_patch_dir,
+    config.amqp_uri);
 client.activate();

@@ -4,8 +4,9 @@ import * as fs from "fs";
 import * as child from 'child_process'
 import { join } from 'path';
 
-let Client = require('ssh2-sftp-client');
-let sftp = new Client();
+var config = require('../Config')
+var Client = require('ssh2-sftp-client');
+var sftp = new Client();
 
 /**
  * 灾备
@@ -19,16 +20,18 @@ export class Server implements Node {
     userName: string
     watchDir: string
     initRelativeDir: string
-    private constructor(ip: string, port: string, userName: string, watchDir: string) {
+    amqpUri: string
+    private constructor(ip: string, port: string, userName: string, watchDir: string, amqpUri: string) {
         this.ip = ip
         this.port = port
         this.userName = userName
         this.watchDir = watchDir
-        this.initRelativeDir = "20180410"
+        this.initRelativeDir = config.init_relative_dir
+        this.amqpUri = amqpUri
     }
-    static getInstance(ip: string, port: string, userName: string, watchDir: string) {
+    static getInstance(ip: string, port: string, userName: string, watchDir: string, amqpUri: string) {
         if (!Server.instance) {
-            Server.instance = new Server(ip, port, userName, watchDir)
+            Server.instance = new Server(ip, port, userName, watchDir, amqpUri)
         }
         return Server.instance
     }
@@ -37,7 +40,7 @@ export class Server implements Node {
     async monitor() {
         var that = this
 
-        Amqp.connect('amqp:////').then(function (conn) {
+        Amqp.connect(that.amqpUri).then(function (conn) {
             process.once('SIGINT', function () { conn.close(); });
             return conn.createChannel().then(function (ch) {
                 let ok: any = ch.assertQueue('task_queue', { durable: true })
@@ -53,8 +56,9 @@ export class Server implements Node {
                     console.log(" [x] Received '%s'", body);
                     let patchFileName = body.split(/[\\\/]/).slice(-1)[0];
 
-                    await that.pullFile('180.3.12.141',
-                        'jianengxi',
+                    await that.pullFile(
+                        config.client_ip,
+                        config.client_username,
                         body,
                         join(that.watchDir, patchFileName));
 
@@ -74,7 +78,7 @@ export class Server implements Node {
             host: hostName,
             port: 22,
             username: userName,
-            privateKey: fs.readFileSync("/home/tra4/.ssh/jianengxi_ubuntu", "utf8")
+            privateKey: fs.readFileSync(config.privateKey, "utf8")
         }).then(async () => {
             await sftp.fastGet(remotePath, localPath)
                 .catch((err) => {
@@ -97,6 +101,10 @@ export class Server implements Node {
 
 }
 
-let server = Server.getInstance('180.2.30.60', '22', 'tra4',
-    "/home/tra4/projects/diff_match_patch/test/disaster_recovery");
+let server = Server.getInstance(
+    config.server_ip,
+    config.server_port,
+    config.server_username,
+    config.server_watch_dir,
+    config.amqp_uri);
 server.activate();

@@ -89,8 +89,10 @@ export class Server implements Node {
 
     //patch A与B的diff到 A_Prime生成B_Prime
     patchDiff(patchFileName: string) {
-        let newDir = (patchFileName.split(/[\.\_\\\/]/).slice(-2))[0]
-        child.execSync(`cd ${this.watchDir} && patch -p1 < ${patchFileName} && mv ${this.initRelativeDir} ${newDir}`)
+        let newDir = (patchFileName.split(/[\.\_\\\/]/).slice(-2))[0];
+        child.execSync(`cd ${this.watchDir} && cp -r ${this.initRelativeDir} tmp`);
+        child.execSync(`cd ${this.watchDir} && patch -p1 < ${patchFileName} && mv ${this.initRelativeDir} ${newDir}`);
+        child.execSync(`cd ${this.watchDir} && mv tmp ${this.initRelativeDir}`);
         this.initRelativeDir = newDir
     }
 
